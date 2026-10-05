@@ -1,0 +1,9 @@
+numpy
+scipy
+torch
+mujoco
+imageio
+imageio-ffmpeg
+matplotlib
+pyyaml
+tqdm

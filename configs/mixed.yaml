@@ -1,0 +1,73 @@
+# Mixed-skill scene: 5 discs (3 light = graspable, 2 heavy = push only), 3 zones, 15 possible tasks.
+# Use with:  BCIHP_CONFIG=configs/mixed.yaml python3 scripts/<script>.py ...
+seed: 0
+
+env:
+  n_objects: 5            # regular objects (target candidates / distractors)
+  n_obstacles_max: 2      # extra obstacle slots, placed on the target->zone path in "blocked" scenes
+  n_zones: 3              # goal zones
+  max_macro_steps: 10     # episode budget = max_macro_steps * micro_steps_per_macro micro-steps
+  micro_steps_per_macro: 20   # = action-chunk / effect horizon H
+  max_delta: 0.012        # max end-effector displacement per micro-step (m)
+  substeps: 10            # physics substeps per micro-step (dt = 0.002 s)
+  allow_grasp: true       # weld-grasp enabled; false = push-only ablation
+  n_heavy: 2              # the last 2 regular objects are heavy: taller, cannot be grasped, must be pushed
+  render_size: [640, 480] # (width, height)
+
+commands:
+  vocab_size: 15        # K = number of distinct (object, zone) tasks = 5 objects x 3 zones
+  decoder_accuracy: 0.8 # diagonal mass of confusion matrix
+  neighbor_bias: 0.7    # fraction of errors going to "adjacent" commands
+  min_steps_between_commands: 1
+
+model:
+  effect_dim: 8         # c
+  motion_dim: 8         # z
+  hidden: 256
+  beta_effect: 0.1      # KL weights (annealed from 0 over train.kl_anneal_epochs)
+  beta_motion: 0.1
+  free_bits: 0.02       # per-dimension KL floor (nats) against posterior collapse
+  state_weight: 10.0    # weight of the state-prediction term (object motion is the key signal)
+  action_weight: 1.0
+
+data:
+  n_transitions: 100000   # windows (s_t, a_{t:t+H}, s_{t+H}); H = env.micro_steps_per_macro
+  stride: 10              # window stride in micro-steps
+  expert_fraction: 0.4    # share of episodes from the scripted oracle (rest: random-primitive exploration)
+  action_noise: 0.05      # xy action noise injected while executing primitives
+  out_path: data/transitions_mixed.npz
+
+direct_bci:               # low-level cursor-style baseline (4 directions + grip) on a noisy decoder
+  mode: grasp             # skill the simulated user employs (cardinal-only pushing is too coarse; see README)
+  steps_per_command: 2    # micro-steps per decoded direction command
+  grip_steps: 8           # micro-steps per GRIP command
+
+train:
+  batch_size: 256
+  epochs: 100
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  kl_anneal_epochs: 20
+  val_fraction: 0.1
+
+planner:
+  cem_iters: 4
+  cem_samples: 256
+  cem_elites: 32
+  high_level_horizon: 3
+  low_level_horizon: 20
+  exec_steps: 5           # micro-steps executed from each planned action chunk before re-planning (MPC)
+  approach_weight: 0.25   # cost shaping: end-effector -> target distance at the last predicted step
+  held_weight: 0.05       # cost shaping: target still held at the last predicted step
+  release_weight: 0.2     # cost shaping: extra penalty if held although already near the zone
+
+session:                  # BCI interaction protocol (see commands.IntentSession)
+  commit_threshold: 0.9   # commit to the most likely intent once its belief reaches this value
+  cmd_interval: 10        # micro-steps consumed per decoded command
+  max_commands: 6         # commit to the current best guess after this many commands
+
+eval:                     # used by --full
+  accuracies: [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  vocab_sizes: [5, 10, 15]
+  episodes_per_cell: 50
